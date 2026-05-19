@@ -4,7 +4,9 @@
 #include <QGraphicsEllipseItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
+#include <QHash>
 #include <QPainter>
+#include <QSet>
 #include <QSvgGenerator>
 
 TopologyScene::TopologyScene(QObject *parent)
@@ -14,10 +16,21 @@ void TopologyScene::loadTopology(const TopologyData &data) {
     clear();
     m_data = data;
 
+    QHash<QString, QPointF> devicePositions;
     QHash<QString, QRectF> stationBounds;
-    int idx = 0;
+    QHash<QString, int> stationCounters;
+    int externalIndex = 0;
+
     for (const auto &device : m_data.devices) {
-        QPointF pos = positionForDevice(device, idx++);
+        const int stationIndex = stationCounters.value(device.stationId, 0);
+        QPointF pos = positionForDevice(device, stationIndex, externalIndex);
+        if (device.stationId.isEmpty()) {
+            ++externalIndex;
+        } else {
+            stationCounters[device.stationId] = stationIndex + 1;
+        }
+
+        devicePositions.insert(device.id, pos);
         const QColor color = m_data.style.colorFor(device.voltageLevel);
         drawDevice(device, pos, color);
 
@@ -27,6 +40,8 @@ void TopologyScene::loadTopology(const TopologyData &data) {
             b = b.isNull() ? current : b.united(current);
         }
     }
+
+    drawConnectivityLayer(devicePositions);
 
     for (const auto &station : m_data.stations) {
         const QRectF bbox = stationBounds.value(station.id).adjusted(-40, -40, 40, 40);
@@ -61,14 +76,83 @@ bool TopologyScene::exportToSvg(const QString &filePath) {
 
 QPointF TopologyScene::stationBase(const QString &stationId) const {
     if (stationId == "S1") return QPointF(100, 120);
-    if (stationId == "S2") return QPointF(560, 220);
-    return QPointF(360, 420);
+    if (stationId == "S2") return QPointF(760, 280);
+    return QPointF(560, 560);
 }
 
-QPointF TopologyScene::positionForDevice(const Device &device, int index) const {
+QPointF TopologyScene::positionForDevice(const Device &device, int stationIndex, int externalIndex) const {
     const QPointF base = stationBase(device.stationId);
-    const int lane = index % 5;
-    return QPointF(base.x() + lane * 110.0, base.y() + (index / 5) * 90.0);
+
+    if (device.stationId.isEmpty()) {
+        return QPointF(base.x() + externalIndex * 140.0, base.y() + ((externalIndex % 2) * 90.0));
+    }
+
+    switch (device.type) {
+    case DeviceType::Busbar:
+        return QPointF(base.x() + 120.0, base.y());
+    case DeviceType::Breaker:
+    case DeviceType::Disconnector:
+    case DeviceType::GroundSwitch:
+        return QPointF(base.x() + 260.0 + stationIndex * 80.0, base.y());
+    case DeviceType::Transformer2W:
+    case DeviceType::Transformer3W:
+        return QPointF(base.x() + 260.0 + stationIndex * 90.0, base.y() + 120.0);
+    case DeviceType::Capacitor:
+    case DeviceType::Reactor:
+    case DeviceType::Load:
+        return QPointF(base.x() + 180.0 + stationIndex * 80.0, base.y() + 220.0);
+    default:
+        return QPointF(base.x() + 180.0 + (stationIndex % 4) * 100.0, base.y() + 80.0 + (stationIndex / 4) * 90.0);
+    }
+}
+
+QPointF TopologyScene::computeNodeAnchor(const QString &nodeId, const QHash<QString, QPointF> &devicePositions) const {
+    QPointF sum(0, 0);
+    int count = 0;
+    for (const auto &device : m_data.devices) {
+        if (!device.terminalNodeIds.contains(nodeId)) {
+            continue;
+        }
+        if (const auto it = devicePositions.find(device.id); it != devicePositions.end()) {
+            sum += it.value();
+            ++count;
+        }
+    }
+
+    if (count == 0) {
+        return QPointF();
+    }
+    return QPointF(sum.x() / count, sum.y() / count);
+}
+
+void TopologyScene::drawConnectivityLayer(const QHash<QString, QPointF> &devicePositions) {
+    QHash<QString, QPointF> nodeAnchors;
+    for (const auto &node : m_data.nodes) {
+        nodeAnchors.insert(node.id, computeNodeAnchor(node.id, devicePositions));
+    }
+
+    const QPen linkPen(QColor(90, 90, 90), 1.5);
+    for (const auto &device : m_data.devices) {
+        const QPointF devicePos = devicePositions.value(device.id);
+        for (const auto &nodeId : device.terminalNodeIds) {
+            if (!nodeAnchors.contains(nodeId)) {
+                continue;
+            }
+            const QPointF nodePos = nodeAnchors.value(nodeId);
+            if (nodePos.isNull()) {
+                continue;
+            }
+            addLine(QLineF(devicePos, nodePos), linkPen)->setZValue(-2);
+        }
+    }
+
+    for (auto it = nodeAnchors.constBegin(); it != nodeAnchors.constEnd(); ++it) {
+        const QPointF nodePos = it.value();
+        if (nodePos.isNull()) {
+            continue;
+        }
+        addEllipse(nodePos.x() - 3, nodePos.y() - 3, 6, 6, QPen(Qt::NoPen), QBrush(QColor(120, 120, 120)))->setZValue(-1);
+    }
 }
 
 void TopologyScene::drawDevice(const Device &device, const QPointF &pos, const QColor &color) {

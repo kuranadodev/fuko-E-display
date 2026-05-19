@@ -23,6 +23,17 @@ enum class DeviceType {
     Terminal
 };
 
+enum class DeviceRole {
+    Generic,
+    Bus,
+    BusDisconnector,
+    Breaker,
+    LineDisconnector,
+    Feeder,
+    Branch,
+    Auxiliary
+};
+
 struct Annotation {
     bool enabled{true};
     QString text;
@@ -37,6 +48,10 @@ struct Device {
     DeviceType type;
     QStringList terminalNodeIds;
     Annotation annotation;
+    QString bayId;
+    DeviceRole role{DeviceRole::Generic};
+    int voltageBandOrder{0};
+    int bayOrder{-1};
 };
 
 struct Node {

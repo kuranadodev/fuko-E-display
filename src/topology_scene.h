@@ -16,7 +16,9 @@ private:
     void drawConnectivityLayer(const QHash<QString, QPointF> &devicePositions);
     QPointF computeNodeAnchor(const QString &nodeId, const QHash<QString, QPointF> &devicePositions) const;
     QPointF stationBase(const QString &stationId) const;
-    QPointF positionForDevice(const Device &device, int stationIndex, int externalIndex) const;
+    QPointF positionForDevice(const Device &device, int bayOrder, int externalIndex) const;
+    QPointF terminalAnchor(const Device &device, const QPointF &center, int terminalIndex) const;
+    void drawLegend();
 
     TopologyData m_data;
 };
